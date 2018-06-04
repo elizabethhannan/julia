@@ -1610,3 +1610,16 @@ for i27351 in 1:15
 end
 f27351(::T, ::T27351, ::T27351) where {T} = 16
 @test_throws MethodError f27351(Val(1), T27351(), T27351())
+
+# issue #27316 - inference shouldn't hang on these
+f27316(::Vector) = nothing
+f27316(::Any) = f27316(Any[][1]), f27316(Any[][1])
+@test Tuple{Nothing,Nothing} <: Base.return_types(f27316, Tuple{Int})[1] == Tuple{Union{Nothing, Tuple{Any,Any}},Union{Nothing, Tuple{Any,Any}}} # we may be able to improve this bound in the future
+function g27316()
+    x = nothing
+    while rand() < 0.5
+        x = (x,)
+    end
+    return x
+end
+@test Tuple{Tuple{Nothing}} <: Base.return_types(g27316, Tuple{})[1] == Any # we may be able to improve this bound in the future
