@@ -4,7 +4,7 @@
 
 module SimdLoop
 
-export @simd, simd_outer_range, simd_inner_length, simd_index
+export @simd, @simdivdep, simd_outer_range, simd_inner_length, simd_index
 
 # Error thrown from ill-formed uses of @simd
 struct SimdError <: Exception
@@ -50,7 +50,7 @@ simd_outer_range(r) = 0:0
 @inline simd_index(r,j::Int,i) = (@inbounds ret = r[i+firstindex(r)]; ret)
 
 # Compile Expr x in context of @simd.
-function compile(x)
+function compile(x, ivdep)
     (isa(x, Expr) && x.head == :for) || throw(SimdError("for loop expected"))
     length(x.args) == 2 || throw(SimdError("1D for loop expected"))
     check_body!(x)
@@ -72,7 +72,7 @@ function compile(x)
                                 local $var = Base.simd_index($r,$j,$i)
                                 $(x.args[2])        # Body of loop
                                 $i += 1
-                                $(Expr(:simdloop))  # Mark loop as SIMD loop
+                                $(Expr(:simdloop, $ivdep))  # Mark loop as SIMD loop
                             end
                         end
                         # Set index to last value just like a regular for loop would
@@ -86,7 +86,11 @@ function compile(x)
 end
 
 macro simd(forloop)
-    esc(compile(forloop))
+    esc(compile(forloop, false))
+end
+
+macro simdivdep(forloop)
+    esc(compile(forloop, true))
 end
 
 end # module SimdLoop

@@ -172,14 +172,18 @@ void LowerSIMDLoop::enableUnsafeAlgebraIfReduction(PHINode *Phi, Loop *L) const
 
 bool LowerSIMDLoop::runOnModule(Module &M)
 {
-    Function *simdloop_marker = M.getFunction("julia.simdloop_marker");
-
-    if (!simdloop_marker)
-        return false;
+    bool ivdep = false;
+    Function *marker = M.getFunction("julia.simdloop_marker");
+    if (!marker) {
+        ivdep = true;
+        marker = M.getFunction("julia.simdivdep_marker");
+        if (!marker)
+            return false;
+    }
 
     bool Changed = false;
     std::vector<Instruction*> ToDelete;
-    for (User *U : simdloop_marker->users()) {
+    for (User *U : marker->users()) {
         Instruction *I = cast<Instruction>(U);
         ToDelete.push_back(I);
         LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>(*I->getParent()->getParent()).getLoopInfo();
@@ -189,6 +193,7 @@ bool LowerSIMDLoop::runOnModule(Module &M)
             continue;
 
         DEBUG(dbgs() << "LSL: simd_loop found\n");
+        DEBUG(dbgs() << "LSL: ivdep is: " << ivdep << "\n");
         BasicBlock *Lh = L->getHeader();
         DEBUG(dbgs() << "LSL: loop header: " << *Lh << "\n");
         MDNode *n = L->getLoopID();
@@ -203,15 +208,19 @@ bool LowerSIMDLoop::runOnModule(Module &M)
 
         MDNode *m = MDNode::get(Lh->getContext(), ArrayRef<Metadata *>(n));
 
-        // Mark memory references so that Loop::isAnnotatedParallel will return true for this loop.
-        for (BasicBlock *BB : L->blocks()) {
-            for (Instruction &I : *BB) {
-                if (I.mayReadOrWriteMemory()) {
-                    I.setMetadata(LLVMContext::MD_mem_parallel_loop_access, m);
-                }
+        // If @simdivdep was used we assume that there is no memory dependecy between loop iterations
+        // This is a fairly strong assumption and does often not hold true for generic code.
+        if (ivdep) {
+            // Mark memory references so that Loop::isAnnotatedParallel will return true for this loop.
+            for (BasicBlock *BB : L->blocks()) {
+               for (Instruction &I : *BB) {
+                   if (I.mayReadOrWriteMemory()) {
+                       I.setMetadata(LLVMContext::MD_mem_parallel_loop_access, m);
+                   }
+               }
             }
+            assert(L->isAnnotatedParallel());
         }
-        assert(L->isAnnotatedParallel());
 
         // Mark floating-point reductions as okay to reassociate/commute.
         for (BasicBlock::iterator I = Lh->begin(), E = Lh->end(); I != E; ++I) {
@@ -226,7 +235,7 @@ bool LowerSIMDLoop::runOnModule(Module &M)
 
     for (Instruction *I : ToDelete)
         I->deleteValue();
-    simdloop_marker->eraseFromParent();
+    marker->eraseFromParent();
 
     return Changed;
 }
